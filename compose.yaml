@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    image: tempmonitor:local
+    restart: unless-stopped
+    # Accepted deployment model: ordinary non-root host networking, no capabilities or routing exceptions.
+    network_mode: host
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: ["/tmp:rw,nosuid,nodev,size=64m,uid=1000,gid=1000"]
+    environment:
+      TM_BIND: 127.0.0.1
+      TM_PORT: "8090"
+      TM_MOCK: "true"
+      TM_PUBLIC_ORIGIN: ${TM_PUBLIC_ORIGIN:-http://localhost:8090}
+      TM_SECURE_COOKIES: "true"
+      TM_RETENTION_DAYS: ${TM_RETENTION_DAYS:-7}
+    volumes:
+      - data:/data
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+
+volumes:
+  data:

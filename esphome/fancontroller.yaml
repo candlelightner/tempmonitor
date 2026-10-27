@@ -1,0 +1,233 @@
+packages:
+  hardware: !include hardware-rev3.3.yaml
+  # Optional external sensor: uncomment after checking its model, 3.3 V wiring and I2C address.
+  # external: !include external-aht20.example.yaml
+
+esphome:
+  name: fancontroller-r3-3-0667a0
+  friendly_name: FanController
+  min_version: 2026.10.0
+  includes: [control.h]
+  project:
+    name: candlelightner.tempmonitor
+    version: "0.1.0"
+  on_boot:
+    priority: 700
+    then:
+      - output.set_level: {id: pwm1, level: 100%}
+      - output.set_level: {id: pwm2, level: 100%}
+      - output.set_level: {id: pwm3, level: 100%}
+      - output.set_level: {id: pwm4, level: 100%}
+  on_shutdown:
+    then:
+      - output.set_level: {id: pwm1, level: 100%}
+      - output.set_level: {id: pwm2, level: 100%}
+      - output.set_level: {id: pwm3, level: 100%}
+      - output.set_level: {id: pwm4, level: 100%}
+
+esp32:
+  board: esp32-s2-saola-1
+  framework: {type: esp-idf}
+
+logger:
+  level: INFO
+
+preferences:
+  flash_write_interval: 1min
+
+wifi:
+  id: controller_wifi
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # DHCP and its local DNS are preserved; no manual IP and no fallback access point.
+  reboot_timeout: 0s
+  power_save_mode: none
+  on_disconnect:
+    - script.execute: apply_control
+
+api:
+  id: controller_api
+  reboot_timeout: 0s
+  encryption:
+    key: !secret api_encryption_key
+  on_client_disconnected:
+    - script.execute: apply_control
+  actions:
+    - action: gpu_update
+      supports_response: status
+      variables:
+        temperature: float
+        valid: bool
+      then:
+        - lambda: |-
+            id(gpu_value) = temperature;
+            id(gpu_valid) = valid && tempmonitor::valid_temperature(temperature, 0, 110);
+            id(gpu_seen) = true;
+            id(gpu_received) = millis();
+        - script.execute: apply_control
+        - api.respond:
+            success: true
+    - action: set_curve
+      supports_response: status
+      variables:
+        channel: int
+        t0: float
+        t1: float
+        t2: float
+        t3: float
+        d0: int
+        d1: int
+        d2: int
+        d3: int
+        minimum_duty: int
+      then:
+        - if:
+            condition:
+              lambda: |-
+                const float temperatures[] = {t0, t1, t2, t3};
+                const int duties[] = {int(d0), int(d1), int(d2), int(d3)};
+                return channel >= 1 && channel <= 4 && minimum_duty >= 5 && minimum_duty <= 100 &&
+                  tempmonitor::valid_curve(temperatures, duties, 4);
+            then:
+              - lambda: |-
+                  const float temperatures[] = {t0, t1, t2, t3};
+                  const int duties[] = {int(d0), int(d1), int(d2), int(d3)};
+                  id(minimum_duties)[channel - 1] = minimum_duty;
+                  for (int i = 0; i < 4; ++i) {
+                    id(curve_temperatures)[(channel - 1) * 4 + i] = temperatures[i];
+                    id(curve_duties)[(channel - 1) * 4 + i] = duties[i];
+                  }
+              - script.execute: apply_control
+              - api.respond:
+                  success: true
+            else:
+              - api.respond:
+                  success: false
+                  error_message: Invalid or unsafe curve
+    - action: manual_override
+      supports_response: status
+      variables:
+        channel: int
+        duty: int
+        seconds: int
+      then:
+        - if:
+            condition:
+              lambda: return channel >= 1 && channel <= 4 && duty >= 0 && duty <= 100 && seconds >= 0 && seconds <= 900;
+            then:
+              - lambda: |-
+                  id(override_duties)[channel - 1] = duty;
+                  id(override_until)[channel - 1] = seconds ? millis() + uint32_t(seconds) * 1000 : millis();
+              - script.execute: apply_control
+              - api.respond:
+                  success: true
+            else:
+              - api.respond:
+                  success: false
+                  error_message: Invalid override
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    on_begin:
+      - lambda: id(ota_active) = true;
+      - output.set_level: {id: pwm1, level: 100%}
+      - output.set_level: {id: pwm2, level: 100%}
+      - output.set_level: {id: pwm3, level: 100%}
+      - output.set_level: {id: pwm4, level: 100%}
+
+globals:
+  - {id: ota_active, type: bool, initial_value: 'false'}
+  - {id: gpu_value, type: float, initial_value: '0'}
+  - {id: gpu_valid, type: bool, initial_value: 'false'}
+  - {id: gpu_seen, type: bool, initial_value: 'false'}
+  - {id: gpu_received, type: uint32_t, initial_value: '0'}
+  - {id: environment_value, type: float, initial_value: '0'}
+  - {id: environment_seen, type: bool, initial_value: 'false'}
+  - {id: environment_received, type: uint32_t, initial_value: '0'}
+  - {id: external_value, type: float, initial_value: '0'}
+  - {id: external_seen, type: bool, initial_value: 'false'}
+  - {id: external_received, type: uint32_t, initial_value: '0'}
+  - {id: external_required, type: bool, initial_value: 'false'}
+  - id: curve_temperatures
+    type: 'std::array<float, 16>'
+    restore_value: true
+    initial_value: '{35,45,60,75,35,45,60,75,35,45,60,75,35,45,60,75}'
+  - id: curve_duties
+    type: 'std::array<int, 16>'
+    restore_value: true
+    initial_value: '{0,40,75,100,0,40,75,100,0,40,75,100,0,30,50,100}'
+  - id: minimum_duties
+    type: 'std::array<int, 4>'
+    restore_value: true
+    initial_value: '{35,35,35,25}'
+  - {id: override_duties, type: 'std::array<int, 4>', initial_value: '{0,0,0,0}'}
+  - {id: override_until, type: 'std::array<uint32_t, 4>', initial_value: '{0,0,0,0}'}
+
+interval:
+  - interval: 1s
+    then:
+      - script.execute: apply_control
+
+script:
+  - id: apply_control
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          static std::array<tempmonitor::StartupBoost, 4> startup_boost{};
+          bool healthy = !id(ota_active) && id(controller_wifi).is_connected() && id(controller_api).is_connected() &&
+            id(gpu_valid) && tempmonitor::fresh(now, id(gpu_received), id(gpu_seen), tempmonitor::TELEMETRY_TIMEOUT_MS) &&
+            tempmonitor::valid_temperature(id(gpu_value), 0, 110) &&
+            tempmonitor::fresh(now, id(environment_received), id(environment_seen), tempmonitor::ENVIRONMENT_TIMEOUT_MS) &&
+            tempmonitor::valid_temperature(id(environment_value), -20, 85);
+          float maximum = std::max(id(gpu_value), id(environment_value));
+          if (id(external_required)) {
+            healthy = healthy && tempmonitor::fresh(now, id(external_received), id(external_seen), 20000) &&
+              tempmonitor::valid_temperature(id(external_value), -20, 85);
+            maximum = std::max(maximum, id(external_value));
+          }
+          for (int i = 0; i < 4; ++i) {
+            healthy = healthy && tempmonitor::valid_curve(&id(curve_temperatures)[i * 4], &id(curve_duties)[i * 4], 4) &&
+              id(minimum_duties)[i] >= 5 && id(minimum_duties)[i] <= 100;
+          }
+          const bool fallback = !healthy || maximum >= 80;
+          id(failsafe).publish_state(fallback);
+          id(control_temperature).publish_state(healthy ? maximum : NAN);
+          id(control_mode).publish_state(fallback ? "Failsafe - 100%" : "Automatic / thermal floor enforced");
+          esphome::output::FloatOutput *outputs[] = {id(pwm1), id(pwm2), id(pwm3), id(pwm4)};
+          esphome::sensor::Sensor *duty_sensors[] = {id(duty1), id(duty2), id(duty3), id(duty4)};
+          esphome::sensor::Sensor *remaining_sensors[] = {id(remaining1), id(remaining2), id(remaining3), id(remaining4)};
+          for (int i = 0; i < 4; ++i) {
+            const auto remaining = tempmonitor::override_remaining(now, id(override_until)[i]);
+            if (!remaining) {
+              id(override_duties)[i] = 0;
+              id(override_until)[i] = now;
+            }
+            const int target = tempmonitor::target_duty(healthy, maximum, &id(curve_temperatures)[i * 4],
+              &id(curve_duties)[i * 4], id(override_duties)[i], remaining > 0, id(minimum_duties)[i]);
+            const int duty = startup_boost[i].apply(now, target);
+            outputs[i]->set_level(duty / 100.0f);
+            duty_sensors[i]->publish_state(duty);
+            remaining_sensors[i]->publish_state(remaining);
+          }
+
+sensor:
+  - {platform: template, id: control_temperature, name: Control Temperature, unit_of_measurement: '°C', update_interval: never}
+  - {platform: template, id: duty1, name: Fan 1 Duty, unit_of_measurement: '%', update_interval: never}
+  - {platform: template, id: duty2, name: Fan 2 Duty, unit_of_measurement: '%', update_interval: never}
+  - {platform: template, id: duty3, name: Fan 3 Duty, unit_of_measurement: '%', update_interval: never}
+  - {platform: template, id: duty4, name: Fan 4 Duty, unit_of_measurement: '%', update_interval: never}
+  - {platform: template, id: remaining1, name: Fan 1 Override Remaining, unit_of_measurement: s, update_interval: never}
+  - {platform: template, id: remaining2, name: Fan 2 Override Remaining, unit_of_measurement: s, update_interval: never}
+  - {platform: template, id: remaining3, name: Fan 3 Override Remaining, unit_of_measurement: s, update_interval: never}
+  - {platform: template, id: remaining4, name: Fan 4 Override Remaining, unit_of_measurement: s, update_interval: never}
+
+binary_sensor:
+  - platform: template
+    id: failsafe
+    name: Failsafe
+
+text_sensor:
+  - platform: template
+    id: control_mode
+    name: Control Mode

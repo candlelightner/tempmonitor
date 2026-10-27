@@ -1,0 +1,22 @@
+# Enable only for a verified AHT20 on the Rev. 3.3 3.3 V Qwiic bus.
+esphome:
+  on_boot:
+    priority: 600
+    then:
+      - lambda: id(external_required) = true;
+sensor:
+  - platform: aht10
+    variant: AHT20
+    i2c_id: sensor_bus
+    address: 0x38
+    update_interval: 5s
+    temperature:
+      name: External Temperature
+      on_value:
+        - lambda: |-
+            id(external_value) = x;
+            id(external_seen) = true;
+            id(external_received) = millis();
+        - script.execute: apply_control
+    humidity:
+      name: External Humidity

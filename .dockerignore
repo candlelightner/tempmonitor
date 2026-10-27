@@ -1,0 +1,10 @@
+.git
+.venv
+data
+secrets
+.env
+esphome/secrets.yaml
+esphome/.esphome
+__pycache__
+.pytest_cache
+test-results
