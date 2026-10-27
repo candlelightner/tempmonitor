@@ -97,10 +97,11 @@ def test_actual_firmware_safety_functions(tmp_path):
     subprocess.run([str(binary)], check=True)
 
 
-def test_external_package_keeps_all_boot_safety_actions():
+@pytest.mark.parametrize("profile", ["--external", "--homeserver"])
+def test_external_package_keeps_all_boot_safety_actions(profile):
     pytest.importorskip("esphome")
     root = Path(__file__).resolve().parents[1]
-    result = subprocess.run([sys.executable, str(root / "scripts/check_firmware.py"), "--external"],
+    result = subprocess.run([sys.executable, str(root / "scripts/check_firmware.py"), profile],
                             capture_output=True, text=True, check=True)
     assert "I2C devices: %s" in result.stdout
     assert "id(external_required) = true" in result.stdout

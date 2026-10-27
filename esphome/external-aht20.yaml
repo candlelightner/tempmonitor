@@ -1,0 +1,22 @@
+# Installed lower-compartment sensor: verified AHT20-compatible protocol at 0x38.
+esphome:
+  on_boot:
+    - priority: 600
+      then:
+        - lambda: id(external_required) = true;
+sensor:
+  - platform: aht10
+    variant: AHT20
+    i2c_id: sensor_bus
+    address: 0x38
+    update_interval: 5s
+    temperature:
+      name: External Temperature
+      on_value:
+        - lambda: |-
+            id(external_value) = x;
+            id(external_seen) = true;
+            id(external_received) = millis();
+        - script.execute: apply_control
+    humidity:
+      name: External Humidity

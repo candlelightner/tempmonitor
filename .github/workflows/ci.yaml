@@ -18,5 +18,6 @@ jobs:
       - run: ruff check tempmonitor tests scripts
       - run: pytest -q
       - run: python scripts/check_firmware.py
-      - run: python scripts/check_firmware.py --external --compile
+      - run: python scripts/check_firmware.py --external
+      - run: python scripts/check_firmware.py --homeserver --compile
       - run: docker compose config --quiet
