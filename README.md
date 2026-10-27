@@ -27,6 +27,8 @@ TM_MOCK=true TM_SECURE_COOKIES=false .venv/bin/tempmonitor
 
 The responsive dashboard includes GPU/environment temperatures, humidity, live temperature/RPM history, four PWM channels, four editable curves, expiring manual overrides, sensor freshness, controller health and hotspot/client status. History lives in SQLite with seven-day retention by default. Charts offer one, six and twenty-four hours. Invalid/stale readings appear as unavailable, never as zero temperatures.
 
+Display labels are configurable in Docker through `.env`: `TM_GPU_LABEL`, `TM_UPPER_LABEL`, `TM_LOWER_LABEL` and `TM_CHANNEL_LABELS` (exactly four comma-separated names). Recreate only the app with the same Compose files to apply them. Labels do not affect sensor IDs, curves, accounts or the SQLite volume. After commissioning, `COMPOSE_FILE=compose.yaml:compose.hardware.yaml` in `.env` keeps subsequent Compose commands in real-hardware mode.
+
 ## Preserve and adopt the existing hotspot
 
 **Use the existing `homeserver-2g`; do not create a replacement AP.** Host tooling is deliberately limited to adopting the host's existing `hotspot-hostapd.service` and `hotspot-dhcp.service`. It reads the installed hostapd config and DHCP unit, rather than storing a second copy of the Wi-Fi password or network configuration.
@@ -69,7 +71,7 @@ Complete the mock/browser tests and firmware checks first. Keep the current cont
    .venv/bin/python scripts/check_firmware.py --external
    .venv/bin/python scripts/check_firmware.py --compile
    # Also validate the real local secrets, without publishing them:
-   .venv/bin/esphome config esphome/fancontroller.yaml
+   .venv/bin/esphome config esphome/homeserver.yaml
    ```
 
    `check_firmware.py` uses an isolated temporary copy and disposable credentials, then deletes its artifacts. It never uploads. Firmware is standard ESPHome YAML plus a small tested curve/safety header, with local hardware definitions for Arthofer Rev. 3.3. The hardware package contains all four 25 kHz PWM outputs and four one-second tachometer counters.
@@ -77,9 +79,9 @@ Complete the mock/browser tests and firmware checks first. Keep the current cont
 4. **When the controller is ready**, compile the real configuration, save a copy of the existing known-good firmware/configuration, and perform the initial upload over USB:
 
    ```bash
-   .venv/bin/esphome compile esphome/fancontroller.yaml
+   .venv/bin/esphome compile esphome/homeserver.yaml
    # Replace this with the verified controller USB port, not another USB device:
-   .venv/bin/esphome upload esphome/fancontroller.yaml --device /dev/ttyACM0
+   .venv/bin/esphome upload esphome/homeserver.yaml --device /dev/ttyACM0
    ```
 
    There is no automatic flash/upload command in application startup, Compose or the hotspot installer. OTA is password protected; no fallback AP or web server is enabled. Maintain independent fan power while commissioning.
@@ -136,7 +138,7 @@ Current wiring: **channel 1** drives both GPU fans through a splitter; **channel
 
 Manual overrides last up to 15 minutes and can raise duty above the curve. They cannot lower the thermal floor, disable fallback or survive a controller reboot. The ESP32 expires them without the server. Zero duty is a PWM request, not removal of 12 V: actual fan stop/minimum speed depends on the connected fan. RPM is monitored, but this initial version does not infer a stalled fan from unused channels or automatically cut GPU power.
 
-Optional AHT20 support is in `external-aht20.example.yaml`. Verify the sensor model, 3.3 V supply, Qwiic pinout and I²C address before enabling the include. Enabling it also makes its health mandatory even if it never produces a reading. Use a matching ESPHome sensor component for other models, retaining the same health/freshness callbacks. No external sensor is assumed merely because an I²C address responds.
+The current installation uses an **Adafruit SHT31-D STEMMA QT** in the lower compartment (air inlet: laptop and two external disks); the controller's onboard sensor is in the upper compartment (air outlet: GPU and enclosure). `esphome/homeserver.yaml` includes both the base controller and `external-sht31.example.yaml`, using the standard SHT3x driver at address `0x44`. Build/upload `homeserver.yaml` for this installation; `fancontroller.yaml` remains the generic onboard-only configuration. The dashboard labels both compartments separately. Verify 3.3 V supply, Qwiic wiring and the address jumper before changing sensors. Enabling the external sensor makes its health mandatory even if it never produces a reading. Use a matching ESPHome component for other models, retaining the same health/freshness callbacks.
 
 Before relying on automatic cooling, physically verify all fitted channels, fan startup at low duty, tachometer scaling, temperature placement and power. Test server shutdown, Wi-Fi loss, invalid telemetry, sensor unplugging, override expiry and ESP32 reboot. Confirm 100% fallback with independent fan power and without a GPU workload. Software/compile tests are not hardware acceptance tests.
 

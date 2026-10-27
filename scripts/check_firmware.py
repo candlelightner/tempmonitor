@@ -13,7 +13,7 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compile", action="store_true")
-    parser.add_argument("--external", action="store_true", help="Also validate the optional AHT20 package")
+    parser.add_argument("--external", action="store_true", help="Also validate the optional SHT31-D package")
     args = parser.parse_args()
     source = Path(__file__).resolve().parents[1] / "esphome"
     with tempfile.TemporaryDirectory(prefix="tempmonitor-firmware-") as temporary:

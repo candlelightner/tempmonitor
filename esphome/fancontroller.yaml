@@ -1,7 +1,7 @@
 packages:
   hardware: !include hardware-rev3.3.yaml
   # Optional external sensor: uncomment after checking its model, 3.3 V wiring and I2C address.
-  # external: !include external-aht20.example.yaml
+  # external: !include external-sht31.example.yaml
 
 esphome:
   name: fancontroller-r3-3-0667a0
@@ -12,12 +12,26 @@ esphome:
     name: candlelightner.tempmonitor
     version: "0.1.0"
   on_boot:
-    priority: 700
-    then:
-      - output.set_level: {id: pwm1, level: 100%}
-      - output.set_level: {id: pwm2, level: 100%}
-      - output.set_level: {id: pwm3, level: 100%}
-      - output.set_level: {id: pwm4, level: 100%}
+    - priority: 700
+      then:
+        - output.set_level: {id: pwm1, level: 100%}
+        - output.set_level: {id: pwm2, level: 100%}
+        - output.set_level: {id: pwm3, level: 100%}
+        - output.set_level: {id: pwm4, level: 100%}
+    - priority: -100
+      then:
+        - lambda: |-
+            std::string devices;
+            for (uint8_t address : {0x38, 0x40, 0x44, 0x45}) {
+              if (id(sensor_bus).write(address, nullptr, 0) == esphome::i2c::ERROR_OK) {
+                char text[7];
+                snprintf(text, sizeof(text), "0x%02x", address);
+                if (!devices.empty()) devices += ", ";
+                devices += text;
+              }
+            }
+            id(i2c_devices).publish_state(devices.empty() ? "No expected devices detected" : devices);
+            ESP_LOGI("tempmonitor", "I2C devices: %s", devices.c_str());
   on_shutdown:
     then:
       - output.set_level: {id: pwm1, level: 100%}
@@ -228,6 +242,9 @@ binary_sensor:
     name: Failsafe
 
 text_sensor:
+  - platform: template
+    id: i2c_devices
+    name: I2C Devices
   - platform: template
     id: control_mode
     name: Control Mode

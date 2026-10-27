@@ -10,7 +10,6 @@ from .models import Curve, Override, Settings
 from .store import Store
 
 log = logging.getLogger(__name__)
-CHANNEL_NAMES = ("GPU fans · splitter", "Unused", "Unused", "Cabinet fans · inlet / exhaust")
 
 
 class Monitor:
@@ -99,7 +98,7 @@ class Monitor:
         gpus = [{**g, "temperature": None if stale else g["temperature"], "stale": stale} for g in self.gpus]
         return {"mock": self.settings.mock, "sampled_at": self.last_sample, "gpu_stale": stale,
                 "gpus": gpus, "device": device, "hotspot": self.hotspot(), "error": self.error,
-                "curves": [c.model_dump() for c in self.curves], "channel_names": CHANNEL_NAMES}
+                "curves": [c.model_dump() for c in self.curves], "channel_names": self.settings.channel_labels}
 
     async def set_curve(self, channel: int, curve: Curve):
         if channel not in range(1, 5):

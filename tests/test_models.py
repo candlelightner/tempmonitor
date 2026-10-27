@@ -1,6 +1,7 @@
 import base64
 import math
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -74,9 +75,33 @@ def test_gpu_and_cabinet_default_profiles():
     assert [(p.temperature, p.duty) for p in cabinet.points] == [(35, 0), (45, 30), (60, 50), (75, 100)]
 
 
+def test_docker_display_labels(monkeypatch):
+    monkeypatch.setenv("TM_GPU_LABEL", "Tesla P40")
+    monkeypatch.setenv("TM_UPPER_LABEL", "GPU outlet")
+    monkeypatch.setenv("TM_LOWER_LABEL", "Laptop and disks")
+    monkeypatch.setenv("TM_CHANNEL_LABELS", "GPU pair,Spare 2,Spare 3,Intake and exhaust")
+    settings = Settings.from_env()
+    assert settings.gpu_label == "Tesla P40"
+    assert settings.upper_label == "GPU outlet" and settings.lower_label == "Laptop and disks"
+    assert settings.channel_labels == ["GPU pair", "Spare 2", "Spare 3", "Intake and exhaust"]
+    monkeypatch.setenv("TM_CHANNEL_LABELS", "Only one")
+    with pytest.raises(ValidationError):
+        Settings.from_env()
+
+
 def test_actual_firmware_safety_functions(tmp_path):
     root = Path(__file__).resolve().parents[1]
     binary = tmp_path / "control-test"
     subprocess.run(["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", str(root / "tests/test_control.cpp"),
                     "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
+
+
+def test_external_package_keeps_all_boot_safety_actions():
+    pytest.importorskip("esphome")
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run([sys.executable, str(root / "scripts/check_firmware.py"), "--external"],
+                            capture_output=True, text=True, check=True)
+    assert "I2C devices: %s" in result.stdout
+    assert "id(external_required) = true" in result.stdout
+    assert "priority: 700" in result.stdout and "priority: -100" in result.stdout

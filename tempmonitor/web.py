@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from .auth import Auth, COOKIE, SESSION_SECONDS
 from .models import Credentials, Curve, Override, PasswordChange, Point, Settings
-from .monitor import CHANNEL_NAMES, Monitor
+from .monitor import Monitor
 from .store import Store
 
 STYLE = Path(__file__).with_name("style.css").read_text()
@@ -324,9 +324,11 @@ def build_dashboard(app, auth, monitor, store, settings):
             alert = ui.label("").classes("banner")
             alert.set_visibility(False)
             with ui.element("section").classes("metrics-grid").props('aria-label="Temperature overview"'):
-                metric("gpu", "NVIDIA P40", "memory")
-                metric("environment", "Environment", "device_thermostat")
-                metric("humidity", "Humidity", "water_drop")
+                metric("gpu", settings.gpu_label, "memory")
+                metric("environment", settings.upper_label, "device_thermostat")
+                metric("external", settings.lower_label, "device_thermostat")
+                metric("humidity", settings.upper_label + " · humidity", "water_drop")
+                metric("external_humidity", settings.lower_label + " · humidity", "water_drop")
                 metric("control", "Control temperature", "shield")
             with ui.element("section").classes("charts-grid").props('aria-label="Live charts"'):
                 with ui.column().classes("panel gap-1"):
@@ -334,7 +336,7 @@ def build_dashboard(app, auth, monitor, store, settings):
                         ui.label("Temperature history").classes("panel-title")
                         history_range = ui.select({1: "Last hour", 6: "Last 6 hours", 24: "Last 24 hours"},
                                                   value=1).props("dense outlined").style("width:145px")
-                    temperature_chart = ui.echart(chart_options(["GPU maximum", "Environment", "External"])).classes("large-chart")
+                    temperature_chart = ui.echart(chart_options([settings.gpu_label, settings.upper_label, settings.lower_label])).classes("large-chart")
                 with ui.column().classes("panel gap-1"):
                     ui.label("Fan speed").classes("panel-title")
                     ui.label("One tachometer reading per channel, including fan pairs").classes("subtle text-xs")
@@ -391,7 +393,7 @@ def build_dashboard(app, auth, monitor, store, settings):
                         with ui.row().classes("items-center justify-between w-full"):
                             ui.label(f"FAN {channel:02}").classes("eyebrow")
                             override_label = ui.label("Automatic").classes("subtle text-xs")
-                        ui.label(CHANNEL_NAMES[channel - 1]).classes("subtle text-xs")
+                        ui.label(settings.channel_labels[channel - 1]).classes("subtle text-xs")
                         minimum_label = ui.label("").classes("subtle text-xs")
                         with ui.row().classes("items-baseline w-full gap-2"):
                             reading = ui.label("— RPM").classes("fan-reading")
@@ -449,6 +451,8 @@ def build_dashboard(app, auth, monitor, store, settings):
             metrics["gpu"].set_text(display(max(temps) if temps else None, "°C"))
             metrics["environment"].set_text(display(value(sensors, "environment_temperature"), "°C"))
             metrics["humidity"].set_text(display(value(sensors, "environment_humidity"), "%"))
+            metrics["external"].set_text(display(value(sensors, "external_temperature"), "°C"))
+            metrics["external_humidity"].set_text(display(value(sensors, "external_humidity"), "%"))
             metrics["control"].set_text(display(value(sensors, "control_temperature"), "°C"))
             mode.set_text(value(sensors, "control_mode") or "Controller offline")
             problem = snap["error"] or ("ESP32 failsafe is active: fans are commanded to 100%." if value(sensors, "failsafe") else "")

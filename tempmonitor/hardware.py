@@ -1,4 +1,6 @@
+import asyncio
 import math
+import socket
 import time
 from itertools import pairwise
 
@@ -64,9 +66,14 @@ class ESPDevice:
             return False
         await self.disconnect()
         self.values.clear()
+        resolved = await asyncio.get_running_loop().getaddrinfo(
+            self.settings.device_host, 6053, type=socket.SOCK_STREAM)
+        addresses = list(dict.fromkeys(item[4][0] for item in resolved))
         self.client = esp.APIClient(self.settings.device_host, 6053,
                                    noise_psk=self.settings.encryption_key(),
-                                   expected_mac=self.settings.device_mac, client_info="tempmonitor/0.1")
+                                   addresses=addresses,
+                                   expected_mac=self.settings.device_mac.replace(":", "").replace("-", "").lower(),
+                                   client_info="tempmonitor/0.1")
         try:
             await self.client.connect(login=True, log_errors=False)
             info = await self.client.device_info()
@@ -122,7 +129,7 @@ class ESPDevice:
         sensors = {}
         for key, item in self.values.items():
             age = round(now - item["received"], 1)
-            stale = not self.connected or age > STALE_SECONDS
+            stale = not self.connected or (not isinstance(item["value"], (bool, str)) and age > STALE_SECONDS)
             sensors[key] = {k: v for k, v in item.items() if k != "received"}
             sensors[key].update(age=age, stale=stale)
             if stale:
@@ -177,6 +184,8 @@ class MockDevice:
 
         sensor("environment_temperature", "Environment", 27.2, "°C")
         sensor("environment_humidity", "Humidity", 48.0, "%")
+        sensor("external_temperature", "Lower Temperature", 25.0, "°C")
+        sensor("external_humidity", "Lower Humidity", 45.0, "%")
         sensor("control_temperature", "Control temperature", temp, "°C")
         sensor("control_mode", "Control mode", "Failsafe · 100%" if fallback else "Automatic")
         sensor("failsafe", "Failsafe", fallback)

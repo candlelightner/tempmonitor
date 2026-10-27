@@ -1,14 +1,13 @@
-# Enable only for a verified AHT20 on the Rev. 3.3 3.3 V Qwiic bus.
+# Adafruit SHT31-D STEMMA QT in the lower compartment (air inlet), 3.3 V I2C.
 esphome:
   on_boot:
-    priority: 600
-    then:
-      - lambda: id(external_required) = true;
+    - priority: 600
+      then:
+        - lambda: id(external_required) = true;
 sensor:
-  - platform: aht10
-    variant: AHT20
+  - platform: sht3xd
     i2c_id: sensor_bus
-    address: 0x38
+    address: 0x44
     update_interval: 5s
     temperature:
       name: External Temperature

@@ -17,6 +17,10 @@ services:
       TM_PUBLIC_ORIGIN: ${TM_PUBLIC_ORIGIN:-http://localhost:8090}
       TM_SECURE_COOKIES: "true"
       TM_RETENTION_DAYS: ${TM_RETENTION_DAYS:-7}
+      TM_GPU_LABEL: ${TM_GPU_LABEL:-NVIDIA P40}
+      TM_UPPER_LABEL: ${TM_UPPER_LABEL:-Upper · air out}
+      TM_LOWER_LABEL: ${TM_LOWER_LABEL:-Lower · air in}
+      TM_CHANNEL_LABELS: ${TM_CHANNEL_LABELS:-GPU fans · splitter,Unused,Unused,Cabinet fans · inlet / exhaust}
     volumes:
       - data:/data
     healthcheck:

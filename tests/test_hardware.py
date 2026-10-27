@@ -1,5 +1,7 @@
+import asyncio
 import base64
 import importlib.util
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,13 +18,20 @@ async def test_encrypted_identity_bound_client_and_acknowledged_actions(tmp_path
     key.write_text(base64.b64encode(b"a" * 32).decode())
     calls = []
 
+    async def resolve(host, port, **_kwargs):
+        assert host == "fancontroller-r3-3-0667a0" and port == 6053
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.77.85", 6053))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", resolve)
+
     class Client:
         is_connected = False
 
         def __init__(self, host, port, **kwargs):
             assert host == "fancontroller-r3-3-0667a0" and port == 6053
             assert kwargs["noise_psk"] == key.read_text()
-            assert kwargs["expected_mac"] == "14:63:93:06:67:A0"
+            assert kwargs["expected_mac"] == "1463930667a0"
+            assert kwargs["addresses"] == ["192.168.77.85"]
 
         async def connect(self, **_kwargs):
             self.is_connected = True
@@ -32,11 +41,15 @@ async def test_encrypted_identity_bound_client_and_acknowledged_actions(tmp_path
                                    esphome_version="2026.10.0", mac_address="14:63:93:06:67:A0")
 
         async def list_entities_services(self):
-            return [esp.SensorInfo(key=1, name="Environment Temperature", object_id="environment_temperature")], [
+            return [esp.SensorInfo(key=1, name="Environment Temperature", object_id="environment_temperature"),
+                    esp.BinarySensorInfo(key=2, name="Failsafe", object_id="failsafe"),
+                    esp.TextSensorInfo(key=3, name="I2C Devices", object_id="i2c_devices")], [
                 esp.UserService(name=name, key=i) for i, name in enumerate(("gpu_update", "set_curve", "manual_override"))]
 
         def subscribe_states(self, callback):
             callback(esp.SensorState(key=1, state=27.5))
+            callback(esp.BinarySensorState(key=2, state=False))
+            callback(esp.TextSensorState(key=3, state="0x40, 0x44"))
 
         async def execute_service(self, service, data, **kwargs):
             assert kwargs["return_response"] is True
@@ -51,6 +64,10 @@ async def test_encrypted_identity_bound_client_and_acknowledged_actions(tmp_path
     assert await device.connect()
     assert not await device.connect()
     assert device.snapshot()["sensors"]["environment_temperature"]["value"] == 27.5
+    device.values["failsafe"]["received"] -= 60
+    assert device.snapshot()["sensors"]["failsafe"]["value"] is False
+    device.values["i2c_devices"]["received"] -= 60
+    assert device.snapshot()["sensors"]["i2c_devices"]["value"] == "0x40, 0x44"
     await device.telemetry(42, True)
     await device.set_curve(1, Curve())
     await device.override(4, Override(duty=70, seconds=300))

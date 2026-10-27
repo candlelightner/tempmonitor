@@ -2,6 +2,7 @@ import base64
 import os
 from itertools import pairwise
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
@@ -21,6 +22,12 @@ class Settings(BaseModel):
     gpu_uuids: list[str] = Field(default_factory=list)
     hotspot_status: Path = Path("/run/tempmonitor-hotspot/status.json")
     retention_days: int = Field(default=7, ge=1, le=90)
+    gpu_label: str = Field(default="NVIDIA P40", min_length=1, max_length=64)
+    upper_label: str = Field(default="Upper · air out", min_length=1, max_length=64)
+    lower_label: str = Field(default="Lower · air in", min_length=1, max_length=64)
+    channel_labels: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=lambda: ["GPU fans · splitter", "Unused", "Unused", "Cabinet fans · inlet / exhaust"],
+        min_length=4, max_length=4)
 
     @model_validator(mode="after")
     def valid_origin(self):
@@ -43,8 +50,8 @@ class Settings(BaseModel):
         for name in cls.model_fields:
             value = os.getenv("TM_" + name.upper())
             if value is not None:
-                values[name] = value.split(",") if name == "gpu_uuids" and value else (
-                    [] if name == "gpu_uuids" else value)
+                values[name] = value.split(",") if name in ("gpu_uuids", "channel_labels") and value else (
+                    [] if name in ("gpu_uuids", "channel_labels") else value)
         return cls.model_validate(values)
 
     def encryption_key(self) -> str:

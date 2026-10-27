@@ -1,0 +1,4 @@
+# Current installation: onboard sensor at air-out, SHT31-D STEMMA QT at air-in.
+packages:
+  controller: !include fancontroller.yaml
+  lower_compartment: !include external-sht31.example.yaml
