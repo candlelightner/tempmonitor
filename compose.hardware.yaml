@@ -1,0 +1,31 @@
+services:
+  app:
+    # NVML needs two existing device nodes and the installed driver library, not a Docker daemon change.
+    devices:
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia0:/dev/nvidia0
+    # Docker writes this resolver into the container only; host DNS/DHCP are untouched.
+    dns: ["${TM_HOTSPOT_DNS:-192.168.77.1}"]
+    environment:
+      TM_MOCK: "false"
+      TM_DEVICE_HOST: ${TM_DEVICE_HOST:-fancontroller-r3-3-0667a0}
+      TM_DEVICE_MAC: ${TM_DEVICE_MAC:-14:63:93:06:67:A0}
+      TM_DEVICE_KEY_FILE: /run/secrets/esp32_api_key
+      TM_GPU_UUIDS: ${TM_GPU_UUIDS:-}
+      LD_LIBRARY_PATH: /usr/local/lib
+    secrets: [esp32_api_key]
+    volumes:
+      - type: bind
+        source: ${TM_NVML_LIBRARY:-/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1}
+        target: /usr/local/lib/libnvidia-ml.so.1
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /run/tempmonitor-hotspot
+        target: /run/tempmonitor-hotspot
+        read_only: true
+        bind: {create_host_path: false}
+
+secrets:
+  esp32_api_key:
+    file: ./secrets/esp32_api_key
