@@ -19,6 +19,7 @@ class Store:
                     id INTEGER PRIMARY KEY CHECK(id=1), username TEXT NOT NULL, password TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (
                     token TEXT PRIMARY KEY, csrf TEXT NOT NULL, expires REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS viewers (token TEXT PRIMARY KEY, expires REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS attempts (peer TEXT NOT NULL, at REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS attempt_time ON attempts(at);
                 CREATE TABLE IF NOT EXISTS curves (channel INTEGER PRIMARY KEY, value TEXT NOT NULL);

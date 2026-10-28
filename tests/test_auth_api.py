@@ -112,3 +112,43 @@ def test_setup_cannot_replace_existing_admin(client):
     response = client.post("/setup", data={"setup_token": "anything", "username": "other", "password": PASSWORD})
     assert response.status_code == 400
     assert client.get("/api/session").json()["username"] == "admin"
+
+
+def test_viewer_is_read_only_and_admin_can_sign_in_directly(client):
+    assert client.get('/legal').status_code == 200
+    assert 'Emil Pobinger' in client.get('/legal').text
+    assert client.get('/api/history').status_code == 401
+    assert client.post('/view', data={'password': 'wrong'}).status_code == 401
+    response = client.post('/view', data={'password': 'fanclub'}, follow_redirects=False)
+    assert response.status_code == 303
+    cookie = response.headers['set-cookie'].lower()
+    assert all(flag in cookie for flag in ('httponly', 'secure', 'samesite=strict', 'max-age=604800'))
+    assert client.get('/api/status').status_code == 200
+    assert client.get('/api/history').status_code == 200
+    assert client.get('/api/session').status_code == 401
+    assert client.get('/password', follow_redirects=False).status_code == 303
+    assert client.put('/api/channels/1/override', json={'duty': 70}).status_code == 401
+    assert client.put('/api/channels/1/curve', json={}).status_code == 401
+    viewer = client.cookies.get('tm_viewer')
+    client.cookies.clear()
+    client.cookies.set('tm_session', viewer)
+    assert client.get('/api/status').status_code == 401
+    client.cookies.clear()
+    sign_in(client)  # No shared-password cookie is required for an administrator.
+    assert client.get('/api/session').status_code == 200
+
+
+def test_viewer_rate_limit_and_expiration(client):
+    for _ in range(5):
+        assert client.post('/view', data={'password': 'wrong'}).status_code == 401
+    assert client.post('/view', data={'password': 'fanclub'}).status_code == 429
+    with client.app.state.store.transaction() as db:
+        db.execute('DELETE FROM attempts')
+    client.post('/view', data={'password': 'fanclub'}, follow_redirects=False)
+    token = client.cookies.get('tm_viewer')
+    with client.app.state.store.transaction() as db:
+        assert db.execute('SELECT token FROM viewers').fetchone()[0] != token
+        db.execute('UPDATE viewers SET expires=?', (time.time() - 1,))
+    assert client.get('/api/status').status_code == 401
+    assert client.post('/view', data={'password': 'fanclub'},
+                       headers={'origin': 'https://evil.example'}).status_code == 403

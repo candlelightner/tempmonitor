@@ -11,6 +11,7 @@ from .models import Credentials, PasswordChange
 from .store import Store
 
 COOKIE = "tm_session"
+VIEWER_COOKIE = "tm_viewer"
 SESSION_SECONDS = 7 * 86400
 
 
@@ -40,13 +41,8 @@ class Auth:
 
     def login(self, credentials: Credentials, peer: str) -> str:
         now = time.time()
-        with self.store.transaction(immediate=True) as db:
-            db.execute("DELETE FROM attempts WHERE at<?", (now - 300,))
-            count = db.execute("SELECT count(*) FROM attempts WHERE peer=?", (peer,)).fetchone()[0]
-            total = db.execute("SELECT count(*) FROM attempts").fetchone()[0]
-            if count >= 5 or total >= 30:
-                raise TimeoutError("Too many attempts; retry in five minutes")
-            db.execute("INSERT INTO attempts VALUES (?,?)", (peer, now))
+        self.attempt(peer, now)
+        with self.store.transaction() as db:
             admin = db.execute("SELECT * FROM admin").fetchone()
         try:
             self.hasher.verify(admin["password"] if admin else self.dummy,
@@ -69,6 +65,34 @@ class Auth:
             db.execute("INSERT INTO sessions VALUES(?,?,?)",
                        (self.digest(token), secrets.token_urlsafe(32), now + SESSION_SECONDS))
         return token
+
+    def attempt(self, peer: str, now: float):
+        with self.store.transaction(immediate=True) as db:
+            db.execute("DELETE FROM attempts WHERE at<?", (now - 300,))
+            count = db.execute("SELECT count(*) FROM attempts WHERE peer=?", (peer,)).fetchone()[0]
+            total = db.execute("SELECT count(*) FROM attempts").fetchone()[0]
+            if count >= 5 or total >= 30:
+                raise TimeoutError("Too many attempts; retry in five minutes")
+            db.execute("INSERT INTO attempts VALUES (?,?)", (peer, now))
+
+    def viewer_login(self, password: str, peer: str) -> str:
+        now = time.time()
+        self.attempt("viewer:" + peer, now)
+        if not hmac.compare_digest(password.encode(), b"fanclub"):
+            raise PermissionError("Invalid viewing password")
+        token = secrets.token_urlsafe(32)
+        with self.store.transaction() as db:
+            db.execute("DELETE FROM attempts WHERE peer=?", ("viewer:" + peer,))
+            db.execute("DELETE FROM viewers WHERE expires<?", (now,))
+            db.execute("INSERT INTO viewers VALUES(?,?)", (self.digest(token), now + SESSION_SECONDS))
+        return token
+
+    def viewer_session(self, token: str) -> bool:
+        if not token or len(token) > 128:
+            return False
+        with self.store.transaction() as db:
+            return db.execute("SELECT 1 FROM viewers WHERE token=? AND expires>?",
+                              (self.digest(token), time.time())).fetchone() is not None
 
     @staticmethod
     def digest(token: str) -> str:

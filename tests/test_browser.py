@@ -64,12 +64,31 @@ def test_setup_dashboard_controls_mobile_and_logout(tmp_path):
             page.evaluate("scrollTo(0, 0)")
             page.screenshot(path="test-results/dashboard-desktop.png", full_page=True)
             page.set_viewport_size({"width": 390, "height": 844})
-            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+            page.wait_for_function("document.documentElement.scrollWidth <= innerWidth + 1")
             page.screenshot(path="test-results/dashboard-mobile.png", full_page=True)
             assert not errors, errors
             page.get_by_role("button", name="Sign out", exact=True).click()
             playwright.expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
             assert page.request.get(origin + "/api/status").status == 401
+            page.set_viewport_size({"width": 1440, "height": 1100})
+            page.goto(origin)
+            page.get_by_label("Viewing password").fill("fanclub")
+            page.get_by_role("button", name="View dashboard", exact=True).click()
+            playwright.expect(page.get_by_text("Homeserver temperatures", exact=True)).to_be_visible()
+            playwright.expect(page.get_by_role("link", name="Log in as admin")).to_be_visible()
+            assert page.get_by_role("button", name="Edit curve", exact=True).count() == 0
+            assert page.get_by_role("button", name="Apply", exact=True).count() == 0
+            page.get_by_text("Last hour", exact=True).click()
+            page.get_by_role("option", name="Last 6 hours", exact=True).click()
+            page.wait_for_timeout(2500)
+            assert page.request.get(origin + "/api/history?hours=6").status == 200
+            page.screenshot(path="test-results/viewer-desktop.png", full_page=True)
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.wait_for_function("document.documentElement.scrollWidth <= innerWidth + 1")
+            page.screenshot(path="test-results/viewer-mobile.png", full_page=True)
+            page.get_by_role("link", name="Log in as admin").click()
+            playwright.expect(page.get_by_label("Username")).to_be_visible()
+            assert not errors, errors
             browser.close()
     finally:
         process.terminate()

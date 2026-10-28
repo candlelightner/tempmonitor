@@ -154,7 +154,7 @@ For Tailscale HTTPS, inspect `tailscale serve status` first and choose an unused
 
 One local administrator, no registration. Passwords use Argon2id; opaque random sessions are stored as SHA-256 token digests in SQLite with seven-day expiration and survive app restarts. Logout revokes a session; password changes revoke all sessions, including existing dashboard callbacks. Login attempts are limited per peer and globally, and first-run setup requires a private filesystem token.
 
-All monitoring/control APIs require the session cookie. Mutations additionally require the exact configured `Origin` and the `X-CSRF-Token` returned by authenticated `GET /api/session`. The same session and origin protection applies to NiceGUI's Socket.IO handshake, and every control callback rechecks session validity. There is no registration, bearer key, external identity provider or Cloudflare-header login bypass.
+Monitoring APIs accept either a read-only viewing session or an administrator session. Control APIs require an administrator session. Mutations additionally require the exact configured `Origin` and the `X-CSRF-Token` returned by authenticated `GET /api/session`. The same session and origin protection applies to NiceGUI's Socket.IO handshake, and every control callback rechecks session validity. There is no registration, bearer key, external identity provider or Cloudflare-header login bypass.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -183,3 +183,29 @@ sudo python3 scripts/hotspot.py preflight
 ```
 
 Tests cover auth/session revocation, origin/CSRF protection, mocked hardware and timeout behavior, real C++ curve/safety functions, hotspot adoption without disruption, secret generation, and the desktop/mobile browser flow. Browser tests start isolated mock instances, use disposable accounts and save screenshots under ignored `test-results/`. They never contact or flash a controller, change network state, or run the host installer against live services.
+
+## Shared viewing and legal information
+
+The default dashboard prompts for the shared viewing password `fanclub`. Viewers see live readings,
+charts and fan curves without mutation controls. The top-right **Log in as admin** link opens `/login`,
+which also works directly without the viewing password. The existing administrator account is unchanged.
+Viewer cookies and server-side hashed sessions expire after seven days; admin and viewer tokens are separate.
+`/legal` is accessible before login and contains the Austrian operator disclosure and privacy/essential-cookie notice.
+Only necessary authentication cookies are used, so there is no cookie-consent banner.
+
+## Automatic updates on this host
+
+`scripts/update.sh` fetches GitHub and fast-forwards the current branch to its upstream. It rebuilds only
+this Compose app, waits for health, and retains the existing database volume, secrets and `.env` hardware mode.
+It preserves local edits and stops if Git cannot fast-forward or would overwrite an edit. Failed builds are
+retried on the next run. It never flashes the controller. The systemd units in `scripts/systemd/` run as
+`emil` every five minutes; Docker commands use the host's existing passwordless sudo access.
+
+```bash
+sudo install -m 644 scripts/systemd/tempmonitor-update.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tempmonitor-update.timer
+journalctl -u tempmonitor-update.service
+```
+
+Updates follow `origin/feat/initial-monitor` on this deployment. Pushes to another branch do not deploy here.

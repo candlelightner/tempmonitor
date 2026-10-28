@@ -24,3 +24,5 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(-
 @media(max-width:1100px){.fan-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.charts-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.dashboard{padding:16px;gap:18px}.page-title{font-size:25px}.metrics-grid{gap:10px}.panel{padding:16px}.metric{font-size:30px}.fan-grid,.health-grid{grid-template-columns:1fr}.brand-subtitle{display:none}.q-header{padding:10px 16px!important}.auth-card{padding:24px}.large-chart{height:240px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+.admin-login{position:absolute;top:20px;right:24px;color:var(--muted);font-size:14px}.legal-card{width:min(100%,700px)}.legal-card h2{font-size:18px;margin-top:24px}
