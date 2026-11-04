@@ -10,6 +10,7 @@ from .models import Curve, Override, Settings, default_curve
 
 POLL_SECONDS = 7
 STALE_SECONDS = 22
+CONNECT_SECONDS = 8
 
 
 def read_gpus(uuids: list[str]) -> list[dict]:
@@ -64,7 +65,12 @@ class ESPDevice:
     async def connect(self):
         if self.connected:
             return False
-        await self.disconnect()
+        # Bound DNS, handshake and discovery: a stuck connect must not consume the firmware watchdog window.
+        async with asyncio.timeout(CONNECT_SECONDS):
+            return await self.open()
+
+    async def open(self):
+        await self.disconnect(force=True)
         self.values.clear()
         resolved = await asyncio.get_running_loop().getaddrinfo(
             self.settings.device_host, 6053, type=socket.SOCK_STREAM)
@@ -89,7 +95,7 @@ class ESPDevice:
             self.client.subscribe_states(self.on_state)
             return True
         except BaseException:
-            await self.disconnect()
+            await self.disconnect(force=True)
             raise
 
     def on_state(self, state):
@@ -136,10 +142,11 @@ class ESPDevice:
                 sensors[key]["value"] = None
         return {"connected": self.connected, "encrypted": True, "info": self.info, "sensors": sensors}
 
-    async def disconnect(self):
+    async def disconnect(self, force=False):
+        # Forced drops skip the goodbye handshake, which waits up to 10 s on a dead transport.
         if self.client:
             try:
-                await self.client.disconnect()
+                await self.client.disconnect(force=force)
             finally:
                 self.client = None
 
@@ -153,6 +160,9 @@ class MockDevice:
         self.overrides = {}
         self.running = [False] * 4
         self.startup_until = [0.0] * 4
+        self.control_temperatures = [math.nan] * 4
+        self.control_duties = [100] * 4
+        self.below_since = [None] * 4
         self.gpu_temperature = 0.0
         self.gpu_valid = False
         self.received = None
@@ -187,23 +197,41 @@ class MockDevice:
         sensor("external_temperature", "Lower Temperature", 25.0, "°C")
         sensor("external_humidity", "Lower Humidity", 45.0, "%")
         sensor("control_temperature", "Control temperature", temp, "°C")
-        sensor("control_mode", "Control mode", "Failsafe · 100%" if fallback else "Automatic")
+        sensor("control_mode", "Control mode", "Failsafe · 100%" if fallback
+               else "Automatic / hysteresis + slow cooldown")
         sensor("failsafe", "Failsafe", fallback)
         for i, curve in enumerate(self.curves, 1):
+            index = i - 1
+            previous = self.control_temperatures[index]
+            controlled = max(temp, min(previous, temp + 5)) if math.isfinite(previous) else temp
+            self.control_temperatures[index] = math.nan if fallback else controlled
             duty = curve.points[-1].duty
-            if temp <= curve.points[0].temperature:
+            if controlled <= curve.points[0].temperature:
                 duty = curve.points[0].duty
             else:
                 for a, b in pairwise(curve.points):
-                    if temp <= b.temperature:
+                    if controlled <= b.temperature:
                         duty = math.ceil(a.duty + (b.duty - a.duty) *
-                                         (temp - a.temperature) / (b.temperature - a.temperature))
+                                         (controlled - a.temperature) / (b.temperature - a.temperature))
                         break
             override, until = self.overrides.get(i, (0, 0))
             remaining = max(0, math.ceil(until - now))
             duty = 100 if fallback else max(duty, override if remaining else 0)
             if duty > 0:
                 duty = max(duty, curve.minimum_duty)
+            if duty >= self.control_duties[index]:
+                self.below_since[index] = None
+            else:
+                if self.below_since[index] is None:
+                    self.below_since[index] = now
+                steps = max(0, math.floor(now - self.below_since[index] - 60))
+                target = duty
+                duty = max(target, self.control_duties[index] - steps)
+                if 0 < duty < curve.minimum_duty:
+                    duty = 0 if target == 0 else curve.minimum_duty
+                self.below_since[index] += steps
+            self.control_duties[index] = duty
+            if duty > 0:
                 if not self.running[i - 1]:
                     self.startup_until[i - 1] = now + 2
                 if now < self.startup_until[i - 1]:
@@ -216,5 +244,5 @@ class MockDevice:
                 "info": {"name": "Mock FanController", "model": "ESP32-S2 simulator", "firmware": "mock"},
                 "sensors": sensors}
 
-    async def disconnect(self):
+    async def disconnect(self, force=False):
         self.connected = False

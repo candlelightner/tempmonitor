@@ -10,7 +10,7 @@ esphome:
   includes: [control.h]
   project:
     name: candlelightner.tempmonitor
-    version: "0.1.0"
+    version: "0.3.0"
   on_boot:
     - priority: 700
       then:
@@ -189,25 +189,46 @@ script:
       - lambda: |-
           const uint32_t now = millis();
           static std::array<tempmonitor::StartupBoost, 4> startup_boost{};
-          bool healthy = !id(ota_active) && id(controller_wifi).is_connected() && id(controller_api).is_connected() &&
-            id(gpu_valid) && tempmonitor::fresh(now, id(gpu_received), id(gpu_seen), tempmonitor::TELEMETRY_TIMEOUT_MS) &&
-            tempmonitor::valid_temperature(id(gpu_value), 0, 110) &&
-            tempmonitor::fresh(now, id(environment_received), id(environment_seen), tempmonitor::ENVIRONMENT_TIMEOUT_MS) &&
-            tempmonitor::valid_temperature(id(environment_value), -20, 85);
+          static std::array<tempmonitor::FanControl, 4> fan_control{};
+          // Late data (host SSD stalls, API reconnects) ramps up; only stale >45 s or a hard fault forces 100%.
+          const bool needs_external = id(external_required);
           float maximum = std::max(id(gpu_value), id(environment_value));
-          if (id(external_required)) {
-            healthy = healthy && tempmonitor::fresh(now, id(external_received), id(external_seen), 20000) &&
-              tempmonitor::valid_temperature(id(external_value), -20, 85);
-            maximum = std::max(maximum, id(external_value));
-          }
+          if (needs_external) maximum = std::max(maximum, id(external_value));
+          bool curves_valid = true;
           for (int i = 0; i < 4; ++i) {
-            healthy = healthy && tempmonitor::valid_curve(&id(curve_temperatures)[i * 4], &id(curve_duties)[i * 4], 4) &&
+            curves_valid = curves_valid && tempmonitor::valid_curve(&id(curve_temperatures)[i * 4], &id(curve_duties)[i * 4], 4) &&
               id(minimum_duties)[i] >= 5 && id(minimum_duties)[i] <= 100;
           }
-          const bool fallback = !healthy || maximum >= 80;
-          id(failsafe).publish_state(fallback);
-          id(control_temperature).publish_state(healthy ? maximum : NAN);
-          id(control_mode).publish_state(fallback ? "Failsafe - 100%" : "Automatic / thermal floor enforced");
+          const char *fault = nullptr;
+          if (id(ota_active)) fault = "OTA in progress";
+          else if (!id(gpu_seen)) fault = "no GPU update yet";
+          else if (!id(gpu_valid)) fault = "GPU reported invalid";
+          else if (!id(environment_seen)) fault = "no environment reading yet";
+          else if (needs_external && !id(external_seen)) fault = "no external reading yet";
+          else if (!tempmonitor::valid_temperature(id(gpu_value), 0, 110) ||
+                   !tempmonitor::valid_temperature(id(environment_value), -20, 85) ||
+                   (needs_external && !tempmonitor::valid_temperature(id(external_value), -20, 85)))
+            fault = "temperature out of range";
+          else if (!curves_valid) fault = "invalid curve or minimum duty";
+          else if (maximum >= 80) fault = "temperature >= 80 C";
+          const auto assessment = tempmonitor::assess(now, fault != nullptr, id(gpu_received), id(environment_received),
+            needs_external, id(external_received));
+          const auto mode = assessment.mode;
+          static int logged_mode = -1;
+          if (int(mode) != logged_mode) {
+            logged_mode = int(mode);
+            if (mode == tempmonitor::Mode::Failsafe) {
+              ESP_LOGW("tempmonitor", "Failsafe - 100%%: %s", fault ? fault : "data older than 45 s");
+            } else if (mode == tempmonitor::Mode::Grace) {
+              ESP_LOGW("tempmonitor", "Comms grace: data %u ms past timeout, ramping fans", unsigned(assessment.excess_ms));
+            } else {
+              ESP_LOGW("tempmonitor", "Automatic control: data fresh");
+            }
+          }
+          id(failsafe).publish_state(mode == tempmonitor::Mode::Failsafe || maximum >= 80);
+          id(control_temperature).publish_state(mode != tempmonitor::Mode::Failsafe ? maximum : NAN);
+          id(control_mode).publish_state(mode == tempmonitor::Mode::Failsafe ? "Failsafe - 100%" :
+            mode == tempmonitor::Mode::Grace ? "Comms grace - ramping" : "Automatic / hysteresis + slow cooldown");
           esphome::output::FloatOutput *outputs[] = {id(pwm1), id(pwm2), id(pwm3), id(pwm4)};
           esphome::sensor::Sensor *duty_sensors[] = {id(duty1), id(duty2), id(duty3), id(duty4)};
           esphome::sensor::Sensor *remaining_sensors[] = {id(remaining1), id(remaining2), id(remaining3), id(remaining4)};
@@ -217,7 +238,7 @@ script:
               id(override_duties)[i] = 0;
               id(override_until)[i] = now;
             }
-            const int target = tempmonitor::target_duty(healthy, maximum, &id(curve_temperatures)[i * 4],
+            const int target = fan_control[i].apply(now, mode, assessment.excess_ms, maximum, &id(curve_temperatures)[i * 4],
               &id(curve_duties)[i * 4], id(override_duties)[i], remaining > 0, id(minimum_duties)[i]);
             const int duty = startup_boost[i].apply(now, target);
             outputs[i]->set_level(duty / 100.0f);

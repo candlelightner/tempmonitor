@@ -52,6 +52,9 @@ async def test_mock_watchdog_thermal_floor_and_override_expiry(monkeypatch):
     await device.connect()
     assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 100
     await device.telemetry(30, True)
+    assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 100
+    now[0] += 161
+    await device.telemetry(30, True)
     assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 0
     await device.override(1, Override(duty=70, seconds=60))
     assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 100
@@ -59,12 +62,41 @@ async def test_mock_watchdog_thermal_floor_and_override_expiry(monkeypatch):
     assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 70
     now[0] += 61
     await device.telemetry(30, True)
+    assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 70
+    now[0] += 131
+    await device.telemetry(30, True)
     assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 0
     await device.telemetry(80, True)
     await device.override(1, Override(duty=0, seconds=60))
     assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 100
     await device.telemetry(30, True)
     now[0] += 23
+    assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 100
+
+
+@pytest.mark.asyncio
+async def test_mock_hysteresis_prevents_threshold_restarts(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("tempmonitor.hardware.time.monotonic", lambda: now[0])
+    device = MockDevice()
+    await device.connect()
+    for second in range(600):
+        now[0] = float(second)
+        await device.telemetry(36 if (second // 7) % 2 == 0 else 35, True)
+        sensors = device.snapshot()["sensors"]
+        if second >= 135:
+            assert sensors["fan_1_duty"]["value"] == 35
+            assert sensors["fan_4_duty"]["value"] == 25
+    for second in range(600, 900):
+        now[0] = float(second)
+        await device.telemetry(32, True)
+        assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 35
+    for second in range(900, 962):
+        now[0] = float(second)
+        await device.telemetry(30, True)
+        sensors = device.snapshot()["sensors"]
+        assert sensors["fan_1_duty"]["value"] == (35 if second < 961 else 0)
+    await device.telemetry(80, True)
     assert device.snapshot()["sensors"]["fan_1_duty"]["value"] == 100
 
 

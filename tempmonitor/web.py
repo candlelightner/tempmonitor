@@ -419,6 +419,7 @@ def build_dashboard(app, auth, monitor, store, settings):
                 with ui.dialog() as dialog, ui.card().classes("p-6 gap-4 w-full").style("max-width:500px"):
                     ui.label(f"Fan {channel} curve").classes("section-heading")
                     ui.label("Four points, increasing temperatures. Reach 100% by 80°C.").classes("subtle text-sm")
+                    ui.label("5°C hysteresis · 60s hold before slowing · immediate cooling increases").classes("subtle text-sm")
                     minimum = ui.number("Minimum running PWM", value=curve.minimum_duty, min=5, max=100,
                                         step=1, suffix="%").props("outlined dense").classes("w-full")
                     inputs = []

@@ -3,11 +3,12 @@ import json
 import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 
 from .hardware import ESPDevice, MockDevice, POLL_SECONDS, STALE_SECONDS, gpu_max, read_gpus
 from .models import Curve, Override, Settings
-from .store import Store
+from .store import SampleWriter, Store
 
 log = logging.getLogger(__name__)
 
@@ -20,11 +21,17 @@ class Monitor:
         self.last_sample = None
         self.error = None
         self.curves = store.curves()
+        self.push_curves = False
+        self.writer = SampleWriter(store, settings.retention_days)
+        # NVML gets its own thread: web handlers stuck on a stalled disk can exhaust the default executor.
+        self.gpu_executor = ThreadPoolExecutor(1, thread_name_prefix="nvml")
         self.lock = asyncio.Lock()
+        self.curve_lock = asyncio.Lock()
         self.task = None
         self.gpu_task = None
 
     async def start(self):
+        self.writer.start()
         self.task = asyncio.create_task(self.run())
 
     async def stop(self):
@@ -35,6 +42,8 @@ class Monitor:
         if self.gpu_task:
             self.gpu_task.cancel()
         await self.device.disconnect()
+        await asyncio.to_thread(self.writer.close, 5)
+        self.gpu_executor.shutdown(wait=False, cancel_futures=True)
 
     async def sample(self):
         if self.settings.mock:
@@ -42,7 +51,8 @@ class Monitor:
                           "temperature": round(46 + math.sin(time.monotonic() / 60) * 9, 1), "error": None}]
         else:
             if self.gpu_task is None:
-                self.gpu_task = asyncio.create_task(asyncio.to_thread(read_gpus, self.settings.gpu_uuids))
+                self.gpu_task = asyncio.get_running_loop().run_in_executor(
+                    self.gpu_executor, read_gpus, self.settings.gpu_uuids)
             try:
                 self.gpus = await asyncio.wait_for(asyncio.shield(self.gpu_task), timeout=3)
                 self.gpu_task = None
@@ -56,29 +66,44 @@ class Monitor:
         self.last_sample = time.time()
         value, valid = gpu_max(self.gpus)
         async with self.lock:
-            new = await self.device.connect()
+            if await self.device.connect():
+                self.push_curves = True
             # Send health first: persisted curves must never delay the telemetry watchdog.
             await self.device.telemetry(value, valid)
-            if new:
+            # A rejection keeps the session open, so remember curves still owed to a fresh connection.
+            if self.push_curves:
                 for channel, curve in enumerate(self.curves, 1):
                     await self.device.set_curve(channel, curve)
+                self.push_curves = False
         self.error = None
 
     async def run(self):
+        failures, warned = 0, 0.0
         while True:
             started = time.monotonic()
             try:
                 await self.sample()
+                if failures:
+                    log.info("Hardware poll recovered after %d failed attempts", failures)
+                failures = 0
             except Exception as exc:
+                failures += 1
                 self.error = "Controller connection or telemetry failed; check device health and local DNS"
-                # Log the exception type only: transport exceptions can include secret connection parameters.
-                log.warning("Hardware poll failed (%s)", type(exc).__name__)
-                await self.device.disconnect()
-            try:
-                await asyncio.to_thread(self.store.record, self.snapshot(), self.settings.retention_days)
-            except Exception:
-                log.exception("Could not persist monitoring sample")
-            await asyncio.sleep(max(0.2, POLL_SECONDS - (time.monotonic() - started)))
+                if failures == 1 or started - warned >= 60:
+                    warned = started
+                    # Log the exception type only: transport exceptions can include secret connection parameters.
+                    log.warning("Hardware poll failed (%s, attempt %d)", type(exc).__name__, failures)
+                # Controller-side rejections arrive over a working session; only drop broken transports.
+                if not isinstance(exc, ValueError):
+                    with suppress(Exception):
+                        await self.device.disconnect(force=True)
+            # Queue only: SQLite runs on the writer thread, so a stalled disk cannot delay the next update.
+            self.writer.submit(self.snapshot())
+            if failures:
+                # Retry 1 s, 2 s, 4 s ... so a single lost update cannot run out the 22 s firmware watchdog.
+                await asyncio.sleep(min(POLL_SECONDS, 2 ** (failures - 1)))
+            else:
+                await asyncio.sleep(max(0.2, POLL_SECONDS - (time.monotonic() - started)))
 
     def hotspot(self):
         try:
@@ -103,11 +128,13 @@ class Monitor:
     async def set_curve(self, channel: int, curve: Curve):
         if channel not in range(1, 5):
             raise ValueError("Channel must be between 1 and 4")
-        async with self.lock:
-            # Persist only acknowledged device settings; the UI must not claim an offline update succeeded.
-            await self.device.set_curve(channel, curve)
+        async with self.curve_lock:
+            async with self.lock:
+                # Persist only acknowledged device settings; the UI must not claim an offline update succeeded.
+                await self.device.set_curve(channel, curve)
+                self.curves[channel - 1] = curve
+            # Save outside the telemetry lock: a stalled disk must not hold back the next gpu_update.
             await asyncio.to_thread(self.store.save_curve, channel, curve)
-            self.curves[channel - 1] = curve
 
     async def override(self, channel: int, override: Override):
         if channel not in range(1, 5):

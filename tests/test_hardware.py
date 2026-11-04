@@ -56,7 +56,7 @@ async def test_encrypted_identity_bound_client_and_acknowledged_actions(tmp_path
             calls.append((service.name, data))
             return SimpleNamespace(success=True)
 
-        async def disconnect(self):
+        async def disconnect(self, force=False):
             self.is_connected = False
 
     monkeypatch.setattr("tempmonitor.hardware.esp.APIClient", Client)
@@ -79,6 +79,37 @@ async def test_encrypted_identity_bound_client_and_acknowledged_actions(tmp_path
     assert device.snapshot()["sensors"]["environment_temperature"]["value"] is None
     with pytest.raises(ConnectionError):
         await device.override(1, Override(duty=100))
+
+
+@pytest.mark.asyncio
+async def test_stuck_connect_is_bounded_and_dropped_without_handshake(tmp_path, monkeypatch):
+    key = tmp_path / "key"
+    key.write_text(base64.b64encode(b"a" * 32).decode())
+    disconnects = []
+
+    async def resolve(*_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.77.85", 6053))]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", resolve)
+
+    class Client:
+        is_connected = False
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def connect(self, **_kwargs):
+            await asyncio.Event().wait()
+
+        async def disconnect(self, force=False):
+            disconnects.append(force)
+
+    monkeypatch.setattr("tempmonitor.hardware.esp.APIClient", Client)
+    monkeypatch.setattr("tempmonitor.hardware.CONNECT_SECONDS", 0.05)
+    device = ESPDevice(Settings(device_key_file=key))
+    with pytest.raises(TimeoutError):
+        await device.connect()
+    assert disconnects == [True] and device.client is None
 
 
 def test_secret_files_are_private_consistent_and_never_overwritten(tmp_path):
