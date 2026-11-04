@@ -1,0 +1,4 @@
+# Current installation: onboard sensor at air-out, verified 0x38 sensor at air-in.
+packages:
+  controller: !include fancontroller.yaml
+  lower_compartment: !include external-aht20.yaml

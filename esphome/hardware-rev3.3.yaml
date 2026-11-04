@@ -1,0 +1,76 @@
+# Arthofer Rev. 3.3 wiring, verified against the manufacturer's Rev. 3.1/3.3 hardware package:
+# https://github.com/zeroflow/wifi-fancontroller/blob/main/hardware-rev-3.1.yaml
+# Only ESPHome's built-in hardware components are used; no external runtime downloads.
+i2c:
+  id: sensor_bus
+  sda: GPIO33
+  scl: GPIO34
+  scan: true
+
+output:
+  - platform: ledc
+    id: pwm1
+    pin: GPIO12
+    frequency: 25000 Hz
+  - platform: ledc
+    id: pwm2
+    pin: GPIO13
+    frequency: 25000 Hz
+  - platform: ledc
+    id: pwm3
+    pin: GPIO14
+    frequency: 25000 Hz
+  - platform: ledc
+    id: pwm4
+    pin: GPIO15
+    frequency: 25000 Hz
+
+sensor:
+  - platform: hdc1080
+    id: onboard_sensor
+    i2c_id: sensor_bus
+    address: 0x40
+    update_interval: 5s
+    temperature:
+      id: environment_temperature
+      name: Environment Temperature
+      on_value:
+        - lambda: |-
+            id(environment_seen) = true;
+            id(environment_received) = millis();
+            id(environment_value) = x;
+        - script.execute: apply_control
+    humidity:
+      name: Environment Humidity
+  - platform: pulse_counter
+    id: rpm1
+    name: Fan 1 Speed
+    pin: {number: GPIO16, mode: INPUT_PULLUP}
+    unit_of_measurement: RPM
+    accuracy_decimals: 0
+    filters: [{multiply: 0.5}]
+    update_interval: 1s
+  - platform: pulse_counter
+    id: rpm2
+    name: Fan 2 Speed
+    pin: {number: GPIO17, mode: INPUT_PULLUP}
+    unit_of_measurement: RPM
+    accuracy_decimals: 0
+    filters: [{multiply: 0.5}]
+    update_interval: 1s
+  - platform: pulse_counter
+    id: rpm3
+    name: Fan 3 Speed
+    pin: {number: GPIO18, mode: INPUT_PULLUP}
+    unit_of_measurement: RPM
+    accuracy_decimals: 0
+    filters: [{multiply: 0.5}]
+    update_interval: 1s
+  - platform: pulse_counter
+    id: rpm4
+    name: Fan 4 Speed
+    pin: {number: GPIO21, mode: INPUT_PULLUP}
+    unit_of_measurement: RPM
+    accuracy_decimals: 0
+    filters: [{multiply: 0.5}]
+    update_interval: 1s
